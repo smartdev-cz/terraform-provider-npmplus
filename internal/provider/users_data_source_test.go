@@ -28,7 +28,7 @@ func TestAccUsersDataSource(t *testing.T) {
 				Config: testAccUsersDataSourceConfig,
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_users.test",
+						"data.npmplus_users.test",
 						tfjsonpath.New("users"),
 						knownvalue.SetExact([]knownvalue.Check{
 							knownvalue.ObjectExact(map[string]knownvalue.Check{
@@ -62,5 +62,5 @@ func TestAccUsersDataSource(t *testing.T) {
 }
 
 const testAccUsersDataSourceConfig = `
-data "nginxproxymanager_users" "test" {}
+data "npmplus_users" "test" {}
 `

@@ -6,6 +6,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,6 +51,8 @@ type NginxProxyManagerProviderModel struct {
 type NginxProxyManagerProviderData struct {
 	Client           *nginxproxymanager.APIClient
 	Auth             context.Context
+	APIURL           string
+	HTTPClient       *http.Client
 	CertificateMutex sync.Mutex
 	Transport        *npmplusCookieTransport
 }
@@ -150,7 +153,17 @@ func (p *NginxProxyManagerProvider) Configure(ctx context.Context, req provider.
 	tflog.MaskMessageStrings(ctx, username, password)
 	tflog.Info(ctx, "Initializing the NPMplus API client")
 
-	transport := &npmplusCookieTransport{base: http.DefaultTransport}
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		baseTransport = &http.Transport{}
+	} else {
+		baseTransport = baseTransport.Clone()
+	}
+	if os.Getenv("NPMPLUS_INSECURE_TLS") == "true" {
+		// NPMplus uses a self-signed certificate for its local admin endpoint.
+		baseTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // explicitly enabled for local acceptance tests
+	}
+	transport := &npmplusCookieTransport{base: baseTransport}
 	httpClient := &http.Client{Transport: transport}
 	config := nginxproxymanager.NewConfiguration()
 	config.Servers[0].URL = parsedUrl.String()
@@ -201,9 +214,11 @@ func (p *NginxProxyManagerProvider) Configure(ctx context.Context, req provider.
 	tflog.Info(ctx, "Successfully authenticated with the NPMplus API")
 
 	providerData := NginxProxyManagerProviderData{
-		Auth:      auth,
-		Client:    client,
-		Transport: transport,
+		Auth:       auth,
+		APIURL:     parsedUrl.String(),
+		Client:     client,
+		HTTPClient: httpClient,
+		Transport:  transport,
 	}
 
 	resp.DataSourceData = &providerData

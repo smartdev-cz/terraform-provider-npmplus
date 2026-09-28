@@ -14,7 +14,7 @@ import (
 // The factory function is called for each Terraform CLI command to create a provider
 // server that the CLI can connect to and interact with.
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
-	"nginxproxymanager": providerserver.NewProtocol6WithError(New("test")()),
+	"npmplus": providerserver.NewProtocol6WithError(New("test")()),
 }
 
 func testAccPreCheck(t *testing.T) {
@@ -24,7 +24,7 @@ func testAccPreCheck(t *testing.T) {
 }
 
 const testUnauthorizedProvider = `
-provider "nginxproxymanager" {
+provider "npmplus" {
 	url      = "http://localhost:81"
 	username = "unauthorized@example.com"
 	password = "unauthorized"

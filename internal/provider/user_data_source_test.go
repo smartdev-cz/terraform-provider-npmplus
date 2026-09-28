@@ -28,54 +28,54 @@ func TestAccUserDataSource(t *testing.T) {
 				Config: testAccUserDataSourceConfig,
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_user.test",
+						"data.npmplus_user.test",
 						tfjsonpath.New("id"),
 						knownvalue.Int64Exact(1),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_user.test",
+						"data.npmplus_user.test",
 						tfjsonpath.New("created_on"),
 						knownvalue.NotNull(),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_user.test",
+						"data.npmplus_user.test",
 						tfjsonpath.New("modified_on"),
 						knownvalue.NotNull(),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_user.test",
+						"data.npmplus_user.test",
 						tfjsonpath.New("name"),
 						knownvalue.StringExact("Administrator"),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_user.test",
+						"data.npmplus_user.test",
 						tfjsonpath.New("nickname"),
 						knownvalue.StringExact("Admin"),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_user.test",
+						"data.npmplus_user.test",
 						tfjsonpath.New("email"),
 						knownvalue.StringExact("admin@example.com"),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_user.test",
+						"data.npmplus_user.test",
 						tfjsonpath.New("avatar"),
 						knownvalue.StringExact(""),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_user.test",
+						"data.npmplus_user.test",
 						tfjsonpath.New("is_disabled"),
 						knownvalue.Bool(false),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_user.test",
+						"data.npmplus_user.test",
 						tfjsonpath.New("roles"),
 						knownvalue.SetExact([]knownvalue.Check{
 							knownvalue.StringExact("admin"),
 						}),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_user.test",
+						"data.npmplus_user.test",
 						tfjsonpath.New("permissions"),
 						knownvalue.ObjectExact(map[string]knownvalue.Check{
 							"access_lists":      knownvalue.StringExact("manage"),
@@ -94,7 +94,7 @@ func TestAccUserDataSource(t *testing.T) {
 }
 
 const testAccUserDataSourceConfig = `
-data "nginxproxymanager_user" "test" {
+data "npmplus_user" "test" {
 	id = 1
 }
 `

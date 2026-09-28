@@ -28,22 +28,22 @@ func TestAccVersionDataSource(t *testing.T) {
 				Config: testAccVersionDataSourceConfig,
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_version.test",
+						"data.npmplus_version.test",
 						tfjsonpath.New("major"),
 						knownvalue.NotNull(),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_version.test",
+						"data.npmplus_version.test",
 						tfjsonpath.New("minor"),
 						knownvalue.NotNull(),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_version.test",
+						"data.npmplus_version.test",
 						tfjsonpath.New("revision"),
 						knownvalue.NotNull(),
 					),
 					statecheck.ExpectKnownValue(
-						"data.nginxproxymanager_version.test",
+						"data.npmplus_version.test",
 						tfjsonpath.New("version"),
 						knownvalue.NotNull(),
 					),
@@ -54,5 +54,5 @@ func TestAccVersionDataSource(t *testing.T) {
 }
 
 const testAccVersionDataSourceConfig = `
-data "nginxproxymanager_version" "test" {}
+data "npmplus_version" "test" {}
 `

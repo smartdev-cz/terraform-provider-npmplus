@@ -1,0 +1,101 @@
+name: Tests
+
+on:
+  pull_request:
+    branches:
+      - develop
+    paths-ignore:
+      - 'README.md'
+  push:
+    branches:
+      - develop
+    tags:
+      - 'v*'
+    paths-ignore:
+      - 'README.md'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+      - run: go mod download
+      - name: Build provider
+        run: |
+          mkdir -p dist
+          go build -trimpath -o dist/terraform-provider-npmplus .
+      - name: Upload provider binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-provider-npmplus-${{ github.sha }}
+          path: dist/terraform-provider-npmplus
+          if-no-files-found: error
+      - name: Run linters
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+
+  test:
+    name: Terraform Provider Acceptance Tests
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform:
+          - '1.8.*'
+          - '1.9.*'
+          - '1.10.*'
+          - '1.11.*'
+          - '1.12.*'
+          - '1.13.*'
+          - '1.14.*'
+          - '1.15.*'
+    services:
+      npmplus:
+        image: docker.io/zoeyvid/npmplus:latest
+        env:
+          TZ: 'UTC'
+          INITIAL_ADMIN_EMAIL: 'admin@example.com'
+          INITIAL_ADMIN_PASSWORD: 'changeme'
+        ports:
+          - 80:80
+          - 81:81
+          - 443:443
+        volumes:
+          - npmplus-data:/data
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+      - name: Download Dependencies
+        run: go mod download
+      - name: Run Acceptance Tests
+        run: go test -v -cover ./internal/provider/
+        env:
+          NPMPLUS_URL: 'https://localhost:81'
+          NPMPLUS_USERNAME: 'admin@example.com'
+          NPMPLUS_PASSWORD: 'changeme'
+          NPMPLUS_INSECURE_TLS: 'true'
+          TF_ACC_PROVIDER_NAMESPACE: 'smartdev-cz'
+          TF_ACC: '1'
+        timeout-minutes: 10
