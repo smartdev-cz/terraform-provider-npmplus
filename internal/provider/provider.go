@@ -1,0 +1,267 @@
+// Copyright (c) Sander Jochems
+// SPDX-License-Identifier: MIT
+
+package provider
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"sync"
+
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/sander0542/nginxproxymanager-go"
+
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
+	"github.com/hashicorp/terraform-plugin-framework/function"
+	"github.com/hashicorp/terraform-plugin-framework/provider"
+	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+)
+
+// Ensure NginxProxyManagerProvider satisfies various provider interfaces.
+var _ provider.Provider = &NginxProxyManagerProvider{}
+var _ provider.ProviderWithFunctions = &NginxProxyManagerProvider{}
+var _ provider.ProviderWithEphemeralResources = &NginxProxyManagerProvider{}
+
+// NginxProxyManagerProvider defines the provider implementation.
+type NginxProxyManagerProvider struct {
+	// version is set to the provider version on release, "dev" when the
+	// provider is built and ran locally, and "test" when running acceptance
+	// testing.
+	version string
+}
+
+// NginxProxyManagerProviderModel describes the provider data model.
+type NginxProxyManagerProviderModel struct {
+	Url      types.String `tfsdk:"url"`
+	Username types.String `tfsdk:"username"`
+	Password types.String `tfsdk:"password"`
+}
+
+type NginxProxyManagerProviderData struct {
+	Client           *nginxproxymanager.APIClient
+	Auth             context.Context
+	CertificateMutex sync.Mutex
+	Transport        *npmplusCookieTransport
+}
+
+func (p *NginxProxyManagerProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
+	resp.TypeName = "npmplus"
+	resp.Version = p.version
+}
+
+func (p *NginxProxyManagerProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "Use the NPMplus provider to interact with resources from NPMplus.",
+		Attributes: map[string]schema.Attribute{
+			"url": schema.StringAttribute{
+				MarkdownDescription: "Full NPMplus URL with protocol and port (e.g. `http://localhost:81`). You should **NOT** supply any path (`/api`), the SDK will use the appropriate paths. Can be specified via the `NPMPLUS_URL` environment variable.",
+				Optional:            true,
+			},
+			"username": schema.StringAttribute{
+				MarkdownDescription: "Username for NPMplus authentication. Can be specified via the `NPMPLUS_USERNAME` environment variable.",
+				Optional:            true,
+			},
+			"password": schema.StringAttribute{
+				MarkdownDescription: "Password for NPMplus authentication. Can be specified via the `NPMPLUS_PASSWORD` environment variable.",
+				Optional:            true,
+				Sensitive:           true,
+			},
+		},
+	}
+}
+
+func (p *NginxProxyManagerProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
+
+	var data NginxProxyManagerProviderModel
+
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		tflog.Trace(ctx, "Failed to load provider configuration")
+		return
+	}
+
+	// Url
+	apiUrl := data.Url.ValueString()
+	if apiUrl == "" {
+		tflog.Trace(ctx, "Url is not set in configuration, checking environment variables")
+		apiUrl = os.Getenv("NPMPLUS_URL")
+	}
+
+	parsedUrl, err := url.Parse(apiUrl)
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("url"),
+			"Url is required",
+			"Please provide a valid url value",
+		)
+
+		return
+	}
+	parsedUrl = parsedUrl.JoinPath("/api")
+
+	// Username
+	username := data.Username.ValueString()
+	if username == "" {
+		tflog.Trace(ctx, "Username is not set in configuration, checking environment variables")
+		username = os.Getenv("NPMPLUS_USERNAME")
+	}
+
+	if username == "" {
+		tflog.Debug(ctx, "Username is not set in configuration or environment variables")
+		resp.Diagnostics.AddAttributeError(
+			path.Root("username"),
+			"Username is required",
+			"Please provide a username value",
+		)
+	}
+
+	// Password
+	password := data.Password.ValueString()
+	if password == "" {
+		tflog.Trace(ctx, "Password is not set in configuration, checking environment variables")
+		password = os.Getenv("NPMPLUS_PASSWORD")
+	}
+
+	if password == "" {
+		tflog.Debug(ctx, "Password is not set in configuration or environment variables")
+		resp.Diagnostics.AddAttributeError(
+			path.Root("password"),
+			"Password is required",
+			"Please provide a password value",
+		)
+	}
+
+	if resp.Diagnostics.HasError() {
+		tflog.Trace(ctx, "Failed to load provider configuration")
+		return
+	}
+
+	tflog.MaskMessageStrings(ctx, username, password)
+	tflog.Info(ctx, "Initializing the NPMplus API client")
+
+	transport := &npmplusCookieTransport{base: http.DefaultTransport}
+	httpClient := &http.Client{Transport: transport}
+	config := nginxproxymanager.NewConfiguration()
+	config.Servers[0].URL = parsedUrl.String()
+	config.HTTPClient = httpClient
+	client := nginxproxymanager.NewAPIClient(config)
+
+	auth := context.Background()
+
+	tflog.Info(ctx, "Authenticating with the NPMplus API")
+
+	tokenRequest, err := json.Marshal(map[string]string{
+		"identity": username,
+		"secret":   password,
+	})
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to authenticate with the NPMplus API", err.Error())
+		return
+	}
+	request, err := http.NewRequestWithContext(auth, http.MethodPost, parsedUrl.String()+"/tokens", bytes.NewReader(tokenRequest))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to authenticate with the NPMplus API", err.Error())
+		return
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := httpClient.Do(request)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to authenticate with the NPMplus API", err.Error())
+		return
+	}
+	body, readErr := io.ReadAll(response.Body)
+	response.Body.Close()
+	if readErr != nil {
+		resp.Diagnostics.AddError("Failed to authenticate with the NPMplus API", readErr.Error())
+		return
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		resp.Diagnostics.AddError("Failed to authenticate with the NPMplus API", fmt.Sprintf("status: %d, body: %s", response.StatusCode, body))
+		return
+	}
+	transport.mu.RLock()
+	hasCookie := transport.cookie != ""
+	transport.mu.RUnlock()
+	if !hasCookie {
+		resp.Diagnostics.AddError("Failed to authenticate with the NPMplus API", "NPMplus did not return the __Host-Http-token cookie")
+		return
+	}
+
+	tflog.Info(ctx, "Successfully authenticated with the NPMplus API")
+
+	providerData := NginxProxyManagerProviderData{
+		Auth:      auth,
+		Client:    client,
+		Transport: transport,
+	}
+
+	resp.DataSourceData = &providerData
+	resp.ResourceData = &providerData
+	resp.EphemeralResourceData = &providerData
+
+	tflog.Info(ctx, "Successfully initialized the NPMplus API client")
+}
+
+func (p *NginxProxyManagerProvider) Resources(ctx context.Context) []func() resource.Resource {
+	return []func() resource.Resource{
+		NewAccessListResource,
+		NewCertificateCustomResource,
+		NewCertificateLetsencryptResource,
+		NewDeadHostResource,
+		NewProxyHostResource,
+		NewRedirectionHostResource,
+		NewSettingsResource,
+		NewStreamResource,
+	}
+}
+
+func (p *NginxProxyManagerProvider) EphemeralResources(ctx context.Context) []func() ephemeral.EphemeralResource {
+	return []func() ephemeral.EphemeralResource{
+		NewUserTokenEphemeralResource,
+	}
+}
+
+func (p *NginxProxyManagerProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
+	return []func() datasource.DataSource{
+		NewAccessListDataSource,
+		NewAccessListsDataSource,
+		NewCertificateDataSource,
+		NewCertificatesDataSource,
+		NewDeadHostDataSource,
+		NewDeadHostsDataSource,
+		NewProxyHostDataSource,
+		NewProxyHostsDataSource,
+		NewRedirectionHostDataSource,
+		NewRedirectionHostsDataSource,
+		NewSettingsDataSource,
+		NewStreamDataSource,
+		NewStreamsDataSource,
+		NewUserDataSource,
+		NewUserMeDataSource,
+		NewUsersDataSource,
+		NewVersionDataSource,
+	}
+}
+
+func (p *NginxProxyManagerProvider) Functions(ctx context.Context) []func() function.Function {
+	return []func() function.Function{}
+}
+
+func New(version string) func() provider.Provider {
+	return func() provider.Provider {
+		return &NginxProxyManagerProvider{
+			version: version,
+		}
+	}
+}
